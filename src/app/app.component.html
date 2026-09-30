@@ -22,7 +22,8 @@
     <div class="header-actions">
       <button nz-button nz-tooltip nzTooltipTitle="撤销 Ctrl/Cmd+Z" [disabled]="store.undoCount() === 0" (click)="store.undo()">撤销</button>
       <button nz-button nz-tooltip nzTooltipTitle="重做 Ctrl/Cmd+Y" [disabled]="store.redoCount() === 0" (click)="store.redo()">重做</button>
-      <button nz-button nzType="primary" (click)="store.snapshot()">保存校勘稿</button>
+      <button nz-button nz-tooltip nzTooltipTitle="在当前校勘稿仓内另存可编辑副本" (click)="store.snapshot()">另存副本</button>
+      <button nz-button nzType="primary" nz-tooltip nzTooltipTitle="冻结为归档包写入历史底稿仓，校勘稿继续可编辑" (click)="store.archiveCurrentDraft()">归档底稿</button>
     </div>
   </header>
 
@@ -42,6 +43,9 @@
       <nz-tag nzColor="error">{{ totalErrors }} 处出律</nz-tag>
       <nz-tag nzColor="warning">{{ totalWarnings }} 处待核</nz-tag>
       <nz-tag>{{ store.differences().length }} 处异文</nz-tag>
+      @if (store.conflicts().length > 0) {
+        <nz-tag nzColor="orange">{{ store.conflicts().length }} 项待裁决</nz-tag>
+      }
     </div>
   </section>
 
@@ -64,9 +68,9 @@
             (ngModelChange)="store.updateText($event)"
           ></textarea>
           <div class="version-note">
-            <span>当前版本</span>
+            <span>当前校勘稿</span>
             <strong>{{ store.activeVersion().name }}</strong>
-            <small>所有编辑自动写入浏览器本地</small>
+            <small>编辑只写入校勘稿仓，历史底稿不会被改动</small>
           </div>
           <nz-divider></nz-divider>
           <div class="keyboard-map">
@@ -280,6 +284,16 @@
           <nz-empty nzNotFoundContent="请选择一份异文底本"></nz-empty>
         }
       </section>
+    </nz-tab>
+
+    <nz-tab [nzTitle]="archiveTitle">
+      <ng-template #archiveTitle>
+        历史底稿
+        @if (store.conflicts().length > 0) {
+          <nz-badge [nzCount]="store.conflicts().length" nzColor="#fa8c16" class="tab-badge"></nz-badge>
+        }
+      </ng-template>
+      <app-archive-panel></app-archive-panel>
     </nz-tab>
 
     <nz-tab nzTitle="版本与导出">

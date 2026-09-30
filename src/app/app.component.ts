@@ -14,6 +14,7 @@ import { NzTabsModule } from 'ng-zorro-antd/tabs';
 import { NzTagModule } from 'ng-zorro-antd/tag';
 import { NzToolTipModule } from 'ng-zorro-antd/tooltip';
 import { METER_TEMPLATES, PoetryStoreService } from './services/poetry-store.service';
+import { ArchivePanelComponent } from './components/archive-panel.component';
 
 @Component({
   selector: 'app-root',
@@ -32,6 +33,7 @@ import { METER_TEMPLATES, PoetryStoreService } from './services/poetry-store.ser
     NzTabsModule,
     NzTagModule,
     NzToolTipModule,
+    ArchivePanelComponent,
   ],
   templateUrl: './app.component.html',
   styleUrl: './app.component.less',

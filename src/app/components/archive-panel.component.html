@@ -1,0 +1,171 @@
+<div class="archive-page">
+  @if (store.pendingJournal(); as journal) {
+    <section class="surface journal-banner">
+      <nz-alert
+        nzType="warning"
+        nzShowIcon
+        [nzMessage]="journal.kind === 'import' ? '归档包导入未完成' : '归档包撤回未完成'"
+        [nzDescription]="journalDetail"
+      ></nz-alert>
+      <ng-template #journalDetail>
+        <p>
+          包「{{ journal.package.name }}」停在检查点（已尝试 {{ journal.attempts }} 次）。
+          @if (journal.lastError) { <span class="journal-error">最后错误：{{ journal.lastError }}</span> }
+        </p>
+        <div class="journal-actions">
+          <button nz-button nzType="primary" (click)="store.retryPendingImport()">从检查点续做</button>
+          @if (journal.kind === 'import') {
+            <button nz-button nzDanger (click)="store.withdrawPendingImport()">撤回整包（恢复导入前）</button>
+          }
+        </div>
+      </ng-template>
+    </section>
+  }
+
+  <section class="surface archive-toolbar">
+    <div>
+      <span class="overline">HISTORY LEDGER</span>
+      <h2>历史底稿仓</h2>
+      <p>归档包一经写入即冻结，当前校勘稿的任何编辑都不会改动底稿；只有导入与整包撤回能改变本仓。</p>
+    </div>
+    <div class="toolbar-actions">
+      <button nz-button nzType="primary" (click)="store.archiveCurrentDraft()">把当前校勘稿归档为底稿</button>
+      <label class="import-button">
+        <input type="file" accept="application/json,.json" (change)="onFileSelected($event)" hidden />
+        <span nz-button nzType="default">导入归档包（.json）</span>
+      </label>
+    </div>
+  </section>
+
+  @if (fileError()) {
+    <nz-alert class="inline-alert" nzType="error" nzShowIcon [nzMessage]="fileError()"></nz-alert>
+  }
+
+  <div class="archive-grid">
+    <section class="surface package-list">
+      <div class="section-head">
+        <h3>已归档底稿（{{ store.archivedPackages().length }}）</h3>
+      </div>
+      @if (store.archivedPackages().length === 0) {
+        <nz-empty nzNotFoundContent="尚无历史底稿；把当前校勘稿归档后会出现在这里"></nz-empty>
+      }
+      @for (pkg of store.archivedPackages(); track pkg.id) {
+        <article class="package-card">
+          <header>
+            <span class="package-seal">档</span>
+            <div>
+              <strong>{{ pkg.name }}</strong>
+              <small>{{ pkg.source || '未注来源' }}</small>
+            </div>
+            <nz-tag>{{ pkg.versions.length }} 个版本</nz-tag>
+          </header>
+          <p class="package-title">{{ pkg.title }}<span *ngIf="pkg.author"> · {{ pkg.author }}</span></p>
+          <ul class="package-versions">
+            @for (version of pkg.versions; track version.id) {
+              <li>
+                <strong>{{ version.name }}</strong>
+                <small>{{ version.source }}</small>
+              </li>
+            }
+          </ul>
+          <footer>
+            <em>归档于 {{ pkg.archivedAt | date: 'yyyy-MM-dd HH:mm' }}</em>
+            <span class="card-actions">
+              <button nz-button nzSize="small" (click)="download(pkg)">导出包</button>
+              <button
+                nz-button
+                nzSize="small"
+                nzDanger
+                nz-tooltip
+                nzTooltipTitle="按导入前备份恢复校勘稿，并从底稿仓移除该包"
+                (click)="withdraw(pkg)"
+              >撤回整包</button>
+            </span>
+          </footer>
+        </article>
+      }
+    </section>
+
+    <aside class="surface conflict-panel">
+      <div class="section-head">
+        <h3>待裁决冲突（{{ store.conflicts().length }}）</h3>
+        @if (store.conflicts().length > 0) {
+          <span class="bulk-actions">
+            <button nz-button nzSize="small" (click)="store.resolveAllConflicts('draft')">全留校勘稿</button>
+            <button nz-button nzSize="small" (click)="store.resolveAllConflicts('incoming')">全取归档包</button>
+          </span>
+        }
+      </div>
+      @if (store.conflicts().length === 0) {
+        <nz-empty nzNotFoundContent="没有待裁决的字段冲突"></nz-empty>
+      }
+      @for (conflict of store.conflicts(); track conflict.id) {
+        <article class="conflict-card">
+          <div class="conflict-head">
+            <nz-tag nzColor="orange">{{ fieldLabels[conflict.field] }}</nz-tag>
+            <strong>第 {{ conflict.draftLine + 1 }} 句「{{ conflict.char }}」</strong>
+            <button nz-button nzType="link" nzSize="small" (click)="store.jumpToConflict(conflict)">定位</button>
+          </div>
+          <p class="conflict-source">来自归档包：{{ conflict.packageName }}</p>
+          <div class="conflict-values">
+            <label [class.is-picked]="choiceFor(conflict) === 'draft'">
+              <input type="radio" [name]="conflict.id" value="draft" [checked]="choiceFor(conflict) === 'draft'" (change)="setChoice(conflict, 'draft')" />
+              <span>校勘稿</span><b>{{ fieldValue(conflict.draftValue) }}</b>
+            </label>
+            <label [class.is-picked]="choiceFor(conflict) === 'incoming'">
+              <input type="radio" [name]="conflict.id" value="incoming" [checked]="choiceFor(conflict) === 'incoming'" (change)="setChoice(conflict, 'incoming')" />
+              <span>归档包</span><b>{{ fieldValue(conflict.incomingValue) }}</b>
+            </label>
+            <label class="custom-line" [class.is-picked]="choiceFor(conflict) === 'custom'">
+              <input type="radio" [name]="conflict.id" value="custom" [checked]="choiceFor(conflict) === 'custom'" (change)="setChoice(conflict, 'custom')" />
+              <span>自定义</span>
+              @if (conflict.field === 'pauseAfter') {
+                <select [ngModel]="'true'" (ngModelChange)="customValue[conflict.id] = $event; setChoice(conflict, 'custom')">
+                  <option value="true">有停顿</option>
+                  <option value="false">无停顿</option>
+                </select>
+              } @else {
+                <input
+                  nz-input
+                  [placeholder]="conflict.field === 'tone' ? '平 / 仄 / 中' : '输入裁决值'"
+                  [ngModel]="customValue[conflict.id] || ''"
+                  (ngModelChange)="customValue[conflict.id] = $event; setChoice(conflict, 'custom')"
+                />
+              }
+            </label>
+          </div>
+          <button class="resolve-button" nz-button nzType="primary" nzBlock (click)="submitConflict(conflict)">确认裁决</button>
+        </article>
+      }
+
+      <nz-divider></nz-divider>
+
+      <div class="section-head">
+        <h3>未安置标注（{{ store.orphans().length }}）</h3>
+      </div>
+      @if (store.orphans().length === 0) {
+        <nz-empty nzNotFoundContent="所有标注都已随行迁入"></nz-empty>
+      }
+      <p class="orphan-hint">以下标注在当前稿找不到对应字（可能已被改字删除）。在逐字标注页选中目标字格后点「安置到选中字」，或放弃该条。</p>
+      @for (orphan of store.orphans(); track $index) {
+        <article class="orphan-card">
+          <div>
+            <strong>包内第 {{ orphan.packageLine + 1 }} 句 · 第 {{ orphan.position + 1 }} 字</strong>
+            <small>{{ orphan.normalized || '（空行）' }}</small>
+            <p class="orphan-mark">
+              平仄：{{ orphan.mark.tone }}
+              韵组：{{ orphan.mark.rhyme || '—' }}
+              停顿：{{ orphan.mark.pauseAfter ? '有' : '无' }}
+            </p>
+            @if (orphan.mark.basis) { <p class="orphan-sub">依据：{{ orphan.mark.basis }}</p> }
+            @if (orphan.mark.note) { <p class="orphan-sub">批注：{{ orphan.mark.note }}</p> }
+          </div>
+          <span class="card-actions">
+            <button nz-button nzSize="small" (click)="store.placeOrphan($index)">安置到选中字</button>
+            <button nz-button nzSize="small" (click)="store.discardOrphan($index)">放弃</button>
+          </span>
+        </article>
+      }
+    </aside>
+  </div>
+</div>

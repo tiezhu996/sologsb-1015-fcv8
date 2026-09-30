@@ -43,3 +43,6 @@ Thumbs.db
 
 # local npm cache used during constrained network installs
 .npm-cache
+
+# 纯逻辑验证的临时编译产物
+/scripts/_verify_out
