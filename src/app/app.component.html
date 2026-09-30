@@ -22,7 +22,7 @@
     <div class="header-actions">
       <button nz-button nz-tooltip nzTooltipTitle="撤销 Ctrl/Cmd+Z" [disabled]="store.undoCount() === 0" (click)="store.undo()">撤销</button>
       <button nz-button nz-tooltip nzTooltipTitle="重做 Ctrl/Cmd+Y" [disabled]="store.redoCount() === 0" (click)="store.redo()">重做</button>
-      <button nz-button nzType="primary" (click)="store.snapshot()">保存校勘稿</button>
+      <button nz-button nzType="primary" nz-tooltip nzTooltipTitle="把当前校勘稿只读归档到底稿仓" (click)="store.archiveSnapshot()">归档底稿</button>
     </div>
   </header>
 
@@ -42,10 +42,28 @@
       <nz-tag nzColor="error">{{ totalErrors }} 处出律</nz-tag>
       <nz-tag nzColor="warning">{{ totalWarnings }} 处待核</nz-tag>
       <nz-tag>{{ store.differences().length }} 处异文</nz-tag>
+      @if (store.conflicts().length) {
+        <nz-tag nzColor="magenta" style="cursor: pointer" (click)="activeTab.set(3)">{{ store.conflicts().length }} 处字段冲突待裁决</nz-tag>
+      }
     </div>
   </section>
 
-  <nz-tabset nzType="line" class="main-tabs">
+  @if (store.pendingTransaction(); as txn) {
+    <nz-alert
+      class="txn-alert"
+      nzType="warning"
+      nzShowIcon
+      [nzMessage]="txn.phase === 'prepare' ? '归档包尚未写入底稿仓' : txn.phase === 'archive-written' ? '底稿仓已收包，校勘稿合并未完成' : '导入未完成'"
+      [nzDescription]="(store.importError() ? '上次写入失败：' + store.importError() + '。' : '检测到未完成的导入检查点。') + '可从检查点重试续上，或整包撤回，绝不留半套历史。'"
+    >
+      <div class="txn-actions">
+        <button nz-button nzSize="small" nzType="primary" (click)="retryImport()">从检查点重试</button>
+        <button nz-button nzSize="small" nzDanger (click)="withdraw(txn.packageId)">整包撤回</button>
+      </div>
+    </nz-alert>
+  }
+
+  <nz-tabset nzType="line" class="main-tabs" [nzSelectedIndex]="activeTab()" (nzSelectedIndexChange)="activeTab.set($event)">
     <nz-tab nzTitle="逐字标注">
       <div class="meter-workbench">
         <aside class="source-panel surface">
@@ -60,11 +78,11 @@
             nz-input
             class="poem-textarea"
             rows="12"
-            [ngModel]="store.activeVersion().text"
+            [ngModel]="activeText()"
             (ngModelChange)="store.updateText($event)"
           ></textarea>
           <div class="version-note">
-            <span>当前版本</span>
+            <span>校勘稿（可编辑仓）</span>
             <strong>{{ store.activeVersion().name }}</strong>
             <small>所有编辑自动写入浏览器本地</small>
           </div>
@@ -282,11 +300,11 @@
       </section>
     </nz-tab>
 
-    <nz-tab nzTitle="版本与导出">
+    <nz-tab [nzTitle]="'版本与导出'">
       <div class="version-layout">
         <section class="surface version-cards">
           <div class="section-title">
-            <div><span class="overline">VERSIONS</span><h2>校勘版本</h2></div>
+            <div><span class="overline">DRAFT OWNERSHIP</span><h2>校勘稿版本（可编辑仓）</h2></div>
             <button nz-button (click)="store.duplicateActiveAsBaseline()">以当前版本为比较底本</button>
           </div>
           <div class="version-grid">
@@ -295,7 +313,7 @@
                 <span class="version-mark">{{ version.name.slice(0, 1) }}</span>
                 <strong>{{ version.name }}</strong>
                 <small>{{ version.source }}</small>
-                <p>{{ version.text.replace('\n', ' / ') }}</p>
+                <p>{{ versionPreview(version) }}</p>
                 <em>{{ version.createdAt | date: 'yyyy-MM-dd HH:mm' }}</em>
               </button>
             }
@@ -310,6 +328,119 @@
           <label class="field-label">当前底本说明</label>
           <input nz-input [ngModel]="store.activeVersion().source" (ngModelChange)="updateVersionSource($event)" />
         </aside>
+      </div>
+    </nz-tab>
+
+    <nz-tab [nzTitle]="archiveTabTitle">
+      <ng-template #archiveTabTitle>
+        <span>归档 · 导入 · 冲突
+          @if (store.conflicts().length) { <em class="tab-badge">{{ store.conflicts().length }}</em> }
+        </span>
+      </ng-template>
+
+      <div class="archive-layout">
+        <section class="surface import-panel">
+          <div class="section-title">
+            <div><span class="overline">IMPORT ARCHIVE PACKAGE</span><h2>导入归档包</h2></div>
+            <nz-tag nzColor="gold">标注随行迁移 · 字段自动合并</nz-tag>
+          </div>
+          <div class="import-body">
+            <p class="import-hint">
+              粘贴归档包 JSON 或选择文件。系统先按行身份（lineId → 来源与上下文 → 文本相似度）逐行认亲，
+              再用字符对齐把逐字标注随同一字迁入；不同字段自动合并，同一字段双方不一致时列入右侧冲突，交人裁决。
+              <strong>校勘稿文字不会被归档包覆盖。</strong>
+            </p>
+            <div class="import-file-row">
+              <input type="file" accept=".json,application/json" (change)="onImportFile($event)" />
+              <button nz-button (click)="exportImportPackage()">导出当前校勘稿为归档交换包</button>
+            </div>
+            <textarea
+              nz-input
+              class="import-textarea"
+              rows="8"
+              placeholder='{"label":"…","source":"…","versions":[{"name":"…","source":"…","lines":[{"lineId":"…","text":"春眠不觉晓，","marks":{4:{…}}}]}]}'
+              [ngModel]="importJson()"
+              (ngModelChange)="importJson.set($event)"
+            ></textarea>
+            @if (store.importError()) {
+              <nz-alert class="import-error" nzType="error" nzShowIcon [nzMessage]="store.importError()"></nz-alert>
+            }
+            <button nz-button nzType="primary" nzBlock [disabled]="!importJson().trim()" (click)="submitImport()">按行身份导入并合并字段</button>
+          </div>
+        </section>
+
+        <section class="surface conflict-panel">
+          <div class="section-title">
+            <div><span class="overline">FIELD CONFLICTS</span><h2>同字段冲突裁决</h2></div>
+            <nz-tag nzColor="magenta">{{ store.conflicts().length }} 待裁决</nz-tag>
+          </div>
+          @if (store.conflicts().length === 0) {
+            <nz-empty class="conflict-empty" nzNotFoundContent="没有待裁决的同字段冲突"></nz-empty>
+          }
+          <div class="conflict-list">
+            @for (conflict of store.conflicts(); track conflict.id) {
+              <article class="conflict-card">
+                <div class="conflict-head">
+                  <nz-tag nzColor="magenta">{{ fieldLabels[conflict.field] }}</nz-tag>
+                  <strong>{{ versionName(conflict.versionId) }}</strong>
+                  <small>{{ conflictLocation(conflict) }}</small>
+                </div>
+                <div class="conflict-values">
+                  <div class="conflict-value current">
+                    <span>校勘稿现值</span>
+                    <b>{{ conflictDisplay(conflict.currentValue) }}</b>
+                  </div>
+                  <div class="conflict-value incoming">
+                    <span>归档包值</span>
+                    <b>{{ conflictDisplay(conflict.incomingValue) }}</b>
+                  </div>
+                </div>
+                <div class="conflict-actions">
+                  <button nz-button nzSize="small" (click)="chooseCurrent(conflict)">保留校勘稿</button>
+                  <button nz-button nzSize="small" nzType="primary" (click)="chooseIncoming(conflict)">采用归档值</button>
+                </div>
+              </article>
+            }
+          </div>
+        </section>
+
+        <section class="surface package-panel">
+          <div class="section-title">
+            <div><span class="overline">HISTORICAL LEDGER</span><h2>历史底稿仓（只收归档包）</h2></div>
+            <button nz-button nzType="primary" (click)="store.archiveSnapshot()">把当前校勘稿归档一份</button>
+          </div>
+          <p class="ledger-hint">本仓只读追加，编辑校勘稿不会改写任何已归档内容；撤回导入包只会把其状态标记为「已撤回」。</p>
+          <div class="package-list">
+            @for (pkg of store.packages(); track pkg.id) {
+              <article class="package-card" [class.is-withdrawn]="pkg.status === 'withdrawn'">
+                <div class="package-head">
+                  <nz-tag [nzColor]="pkg.status === 'withdrawn' ? 'default' : pkg.kind === 'import' ? 'gold' : pkg.kind === 'migration' ? 'geekblue' : 'green'">
+                    {{ kindLabels[pkg.kind] }}
+                  </nz-tag>
+                  <strong>{{ pkg.label }}</strong>
+                  <em>{{ pkg.createdAt | date: 'yyyy-MM-dd HH:mm' }}</em>
+                </div>
+                <p class="package-source">来源：{{ pkg.source }}</p>
+                @if (pkg.note) { <p class="package-note">{{ pkg.note }}</p> }
+                <div class="package-foot">
+                  @if (pkg.workspace) {
+                    <nz-tag>{{ pkg.workspace.versions.length }} 个版本快照</nz-tag>
+                  }
+                  @if (pkg.versions) {
+                    <nz-tag>{{ pkg.versions.length }} 个导入版本</nz-tag>
+                  }
+                  @if (pkg.status === 'withdrawn') {
+                    <nz-tag>已撤回</nz-tag>
+                  } @else {
+                    <button nz-button nzSize="small" nzDanger (click)="withdraw(pkg.id)">整包撤回</button>
+                  }
+                </div>
+              </article>
+            } @empty {
+              <nz-empty class="conflict-empty" nzNotFoundContent="底稿仓暂无归档包"></nz-empty>
+            }
+          </div>
+        </section>
       </div>
     </nz-tab>
   </nz-tabset>
